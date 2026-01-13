@@ -2,3 +2,6 @@
 name = "termabc"
 version = "0.1.0"
 edition = "2024"
+
+[dependencies]
+termsize = "0.1.9"
