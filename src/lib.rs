@@ -45,24 +45,30 @@ type Static = &'static str;
 
 pub trait Canvas {
     fn clear(&mut self);
-    fn addstr(&mut self, col: Cell, row: Cell, string: &str, style: Option<&Style>);
     fn render(&self, col: Cell, row: Cell) -> Str;
+    fn addtext(&mut self, string: &str);
+    fn addcmd(&mut self, cmd: &str);
+    fn setstyle(&mut self, style: Option<&Style>);
+    fn setcursor(&mut self, col: Cell, row: Cell);
+
+    fn addstr(&mut self, col: Cell, row: Cell, string: &str, style: Option<&Style>) {
+        self.setcursor(col, row);
+        self.setstyle(style);
+        self.addtext(string);
+    }
 
     fn draw_hbar(&mut self, col: Cell, row: Cell, length: Cell, ch: &str, style: Option<&Style>) {
         self.addstr(col, row, &ch.repeat(length.into()), style);
     }
 
     fn draw_vbar(&mut self, col: Cell, row: Cell, length: Cell, ch: &str, style: Option<&Style>) {
-        // TODO use CUR_DOWN_ONE instead! see todo below
-        for i in 0..length {
-            self.addstr(col, row + i, ch, style);
+        self.setstyle(style);
+        self.setcursor(col, row);
+        for _ in 0..length {
+            self.addtext(ch);
+            self.addcmd(&format!("{CUR_LEFT_ONE}{CUR_DOWN_ONE}"));
         }
     }
-
-    // TODO create required addtext and addcmd, then derive addstr from those
-    // this would make it possible to add initial methods that utilize commands
-    // other than CUR_SET and style commands
-    // to do this, Instruction will have to be replaced with an enum
 }
 
 #[derive(Default, Clone)]
@@ -155,7 +161,6 @@ pub struct Style {
     bg: Option<Color>,
 }
 
-// TODO this thing is pretty ugly.
 static EMPTY_STYLE: Style = Style::new();
 
 impl Style {
@@ -186,7 +191,13 @@ impl Style {
         self.bg.as_ref()
     }
 
-    // TODO create with_(fg|bg) that clones self and replaces fg or bg
+    pub fn with_fg(&self, fg: Color) -> Self {
+        self.clone().fg(fg)
+    }
+
+    pub fn with_bg(&self, bg: Color) -> Self {
+        self.clone().bg(bg)
+    }
 
     pub fn as_string(&self) -> Str {
         let mut string = String::new();
@@ -198,10 +209,16 @@ impl Style {
     }
 }
 
-// (row, col, string, style)
-type Instruction = (Cell, Cell, Str, Str);
+#[derive(Clone)]
+enum Instruction {
+    // TODO add more instructions for moving the cursor, so cursor position can be kept 
+    // aware of and it is possible to ensure you can not draw outside canvases
+    Text(String),
+    Style(String),
+    SetCursor(Cell, Cell),
+    Command(String),
+}
 
-/// Simply remembers the order of addstr() calls.
 #[derive(Clone)]
 pub struct InstructionBuffer<'a> {
     instructions: Vec<Instruction>,
@@ -221,37 +238,51 @@ impl<'a> InstructionBuffer<'a> {
     }
 }
 
-impl Canvas for InstructionBuffer<'_> {
+impl<'a> Canvas for InstructionBuffer<'a> {
     fn clear(&mut self) {
         self.instructions.clear();
     }
 
-    fn addstr(&mut self, col: Cell, row: Cell, string: &str, style: Option<&Style>) {
-        let style = match style {
-            Some(style) => style,
-            None => self.default_style
-        };
-        self.instructions.push((row, col, string.to_string(), style.as_string()));
+    fn addtext(&mut self, string: &str) {
+        self.instructions.push(Instruction::Text(string.to_string()));
+    }
+
+    fn addcmd(&mut self, cmd: &str) {
+        self.instructions.push(Instruction::Command(cmd.to_string()));
+    }
+
+    fn setcursor(&mut self, col: Cell, row: Cell) {
+        self.instructions.push(Instruction::SetCursor(col, row));
+    }
+
+    fn setstyle(&mut self, style: Option<&Style>) {
+        self.instructions.push(Instruction::Style(
+            style.unwrap_or_else(|| self.default_style).as_string()
+        ));
     }
 
     fn render(&self, start_col: Cell, start_row: Cell) -> Str {
         let mut result = String::new();
+        let mut row = start_row;
 
-        for (row, col, string, style) in self.instructions.iter() {
-            // truncate if too long
-            let string = if usize::from(self.width) < string.len() {
-                string.get(..usize::from(self.width)).unwrap()
-            } else { string };
-
-            result.push_str(&(formatf!(
-                "{CUR_SET}{{}}{{}}{{}}",
-                start_row + row + 1, start_col + col + 1,
-                style, &string, self.default_style.as_string()
-            )));
-
-            // skip remaining rows if limit is reached
-            if *row == self.height {
-                break
+        for instruction in self.instructions.iter() {
+            match instruction {
+                Instruction::Text(string) => {
+                    if row < self.height {
+                        // truncate if too long
+                        let string = if usize::from(self.width) < string.len() {
+                            string.get(..usize::from(self.width)).unwrap()
+                        } else { string };
+                        result.push_str(string);
+                    }
+                }
+                Instruction::SetCursor(col, new_row) => {
+                    result.push_str(&formatf!("{CUR_SET}", start_row + new_row + 1, start_col + col + 1));
+                    row = *new_row;
+                }
+                Instruction::Command(string) | Instruction::Style(string) => {
+                    result.push_str(string);
+                }
             }
         }
 
@@ -259,15 +290,15 @@ impl Canvas for InstructionBuffer<'_> {
     }
 }
 
+pub enum BorderStyle {
+    Gap(Cell),
+    Connected2 { borderh: Static, borderv: Static },
+}
+
 pub enum Paner<T> {
     Pane(T),
     Horizontal(Vec<(Cell, Paner<T>)>),
     Vertical(Vec<(Cell, Paner<T>)>),
-}
-
-pub enum BorderStyle {
-    Gap(Cell),
-    Connected2 { borderh: Static, borderv: Static },
 }
 
 impl<T> Paner<T> {
@@ -323,18 +354,6 @@ impl<T> Paner<T> {
                     BorderStyle::Gap(cells) => cells,
                     BorderStyle::Connected2 { .. } => 1,
                 };
-
-                // let (init_start_col, init_start_row) = (start_col, start_row);
-
-                // if horizontal {
-                //     start_col += gap;
-                //     width -= gap;
-                //     // height -= 1;
-                // } else {
-                //     start_row += gap;
-                //     height -= gap;
-                //     // width -= 1;
-                // }
 
                 let mut canvas = InstructionBuffer::new(width + 1, height + 1, None);
 
