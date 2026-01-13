@@ -1,5 +1,8 @@
 use termabc::*;
-use termabc::control_sequences::*;
+use termabc::{
+    control_sequences::*,
+    Color::*,
+};
 
 enum PaneType {
     Normal,
@@ -7,22 +10,27 @@ enum PaneType {
 }
 
 fn main() {
-    let paner = Paner::Horizontal(vec![
-        (1, Paner::Pane(PaneType::Normal)),
-        (1, Paner::Vertical(vec![
-            (1, Paner::Pane(PaneType::Normal)),
-            (1, Paner::Horizontal(vec![
-                (1, Paner::Pane(PaneType::Special)),
-                (1, Paner::Pane(PaneType::Normal)),
+    let paner = {
+        use Paner::*;
+        use PaneType::*;
+
+        Horizontal(vec![
+            (1, Pane(Normal)),
+            (1, Vertical(vec![
+                (1, Pane(Normal)),
+                (1, Horizontal(vec![
+                    (1, Pane(Special)),
+                    (1, Pane(Normal)),
+                ])),
+                (1, Pane(Normal)),
+                (1, Pane(Normal)),
             ])),
-            (1, Paner::Pane(PaneType::Normal)),
-            (1, Paner::Pane(PaneType::Normal)),
-        ])),
-        (1, Paner::Vertical(vec![
-            (1, Paner::Pane(PaneType::Normal)),
-            (1, Paner::Pane(PaneType::Special)),
-        ])),
-    ]);
+            (1, Vertical(vec![
+                (1, Pane(Normal)),
+                (1, Pane(Special)),
+            ])),
+        ])
+    };
 
     let mut size = termsize::get().unwrap();
     size.rows -= 1; // reserve last row for shell prompt
@@ -34,23 +42,22 @@ fn main() {
         }
     );
 
-    let default_style = Style::new().fg(Color::Red);
+    let default_style = Style::new().fg(BrightRed).bg(BrightBlack);
 
-    print!("{ERASE_SCREEN}");
-    print!("{}", rendered_paner);
+    print!("{ERASE_SCREEN}{}", rendered_paner);
 
     for (panetype, col, row, width, height) in panes {
         let mut canvas = InstructionBuffer::new(width, height, Some(&default_style));
 
         let (text, style) = match panetype {
             PaneType::Normal => ("example text", None),
-            PaneType::Special => ("special text", Some(&Style::new().fg(Color::Green)))
+            PaneType::Special => ("special text", Some(&default_style.with_fg(BrightGreen)))
+            // NOTE with_fg() clones the color, which should be avoided in a loop like this
         };
 
         canvas.addstr(0, 0, text, style);
-
         print!("{}", canvas.render(col, row));
     }
 
-    printf!("{CUR_SET}", size.rows + 1, 1);
+    printf!("{CUR_SET}{RESET}", size.rows + 1, 1);
 }
