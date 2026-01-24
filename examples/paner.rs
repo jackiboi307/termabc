@@ -35,12 +35,7 @@ fn main() {
     let mut size = termsize::get().unwrap();
     size.rows -= 1; // reserve last row for shell prompt
 
-    let (rendered_paner, panes) = paner.render(0, 0, size.cols, size.rows,
-        &BorderStyle::Connected2 {
-            borderh: "-",
-            borderv: "|",
-        }
-    );
+    let (rendered_paner, panes) = paner.render(0, 0, size.cols, size.rows, &BorderStyle::Connected2("-", "|"));
 
     let default_style = Style::new().fg(BrightRed).bg(BrightBlack);
 
@@ -51,7 +46,7 @@ fn main() {
 
         let (text, style) = match panetype {
             PaneType::Normal => ("example text", None),
-            PaneType::Special => ("special text", Some(&default_style.with_fg(BrightGreen)))
+            PaneType::Special => ("special text", Some(&default_style.with_fg(BrightGreen).bold()))
             // NOTE with_fg() clones the color, which should be avoided in a loop like this
         };
 

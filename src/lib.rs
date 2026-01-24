@@ -3,6 +3,8 @@ pub mod input_sequences;
 
 use control_sequences::*;
 
+use std::fmt;
+
 /** A sort of dynamic version of formatf, that can be used with control sequence constants.
   * ```
   * formatf!(
@@ -63,10 +65,9 @@ pub trait Canvas {
 
     fn draw_vbar(&mut self, col: Cell, row: Cell, length: Cell, ch: &str, style: Option<&Style>) {
         self.setstyle(style);
-        self.setcursor(col, row);
-        for _ in 0..length {
+        for i in 0..length {
+            self.setcursor(col, row + i);
             self.addtext(ch);
-            self.addcmd(&format!("{CUR_LEFT_ONE}{CUR_DOWN_ONE}"));
         }
     }
 }
@@ -157,11 +158,28 @@ impl Color {
 
 #[derive(Clone)]
 pub struct Style {
-    fg: Option<Color>,
-    bg: Option<Color>,
+    pub fg: Option<Color>,
+    pub bg: Option<Color>,
+    pub bold: bool,
+    pub dim: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub blink: bool,
+    pub strike: bool,
 }
 
 static EMPTY_STYLE: Style = Style::new();
+
+macro_rules! gen_methods {
+    ($($name:ident),*) => {
+        $(
+            pub const fn $name(mut self) -> Self {
+                self.$name = true;
+                self
+            }
+        )*
+    }
+}
 
 impl Style {
     pub const EMPTY: &'static Style = &EMPTY_STYLE;
@@ -170,26 +188,34 @@ impl Style {
         Self {
             fg: Some(Color::Default),
             bg: Some(Color::Default),
+            bold: false,
+            dim: false,
+            italic: false,
+            underline: false,
+            blink: false,
+            strike: false,
         }
     }
 
-    pub fn fg(mut self, fg: Color) -> Self {
+    gen_methods!(bold, dim, italic, underline, blink, strike);
+
+    pub const fn fg(mut self, fg: Color) -> Self {
         self.fg = Some(fg);
         self
     }
 
-    pub fn bg(mut self, bg: Color) -> Self {
+    pub const fn bg(mut self, bg: Color) -> Self {
         self.bg = Some(bg);
         self
     }
 
-    pub fn get_fg(&self) -> Option<&Color> {
-        self.fg.as_ref()
-    }
+    // pub fn get_fg(&self) -> Option<&Color> {
+    //     self.fg.as_ref()
+    // }
 
-    pub fn get_bg(&self) -> Option<&Color> {
-        self.bg.as_ref()
-    }
+    // pub fn get_bg(&self) -> Option<&Color> {
+    //     self.bg.as_ref()
+    // }
 
     pub fn with_fg(&self, fg: Color) -> Self {
         self.clone().fg(fg)
@@ -200,12 +226,26 @@ impl Style {
     }
 
     pub fn as_string(&self) -> Str {
-        let mut string = String::new();
+        // NOTE always including RESET might be wasteful?
+        let mut string = String::from(RESET);
 
         if let Some(fg) = &self.fg { string.push_str(&fg.as_string_fg()) }
         if let Some(bg) = &self.bg { string.push_str(&bg.as_string_bg()) }
 
+        if self.bold { string.push_str(BOLD); }
+        if self.dim { string.push_str(DIM); }
+        if self.italic { string.push_str(ITALIC); }
+        if self.underline { string.push_str(UNDERLINE); }
+        if self.blink { string.push_str(BLINK); }
+        if self.strike { string.push_str(STRIKE); }
+
         string
+    }
+}
+
+impl fmt::Display for Style {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.as_string())
     }
 }
 
@@ -292,7 +332,8 @@ impl<'a> Canvas for InstructionBuffer<'a> {
 
 pub enum BorderStyle {
     Gap(Cell),
-    Connected2 { borderh: Static, borderv: Static },
+    Connected2(Static, Static),
+    // Disconnected2(Static, Static),
 }
 
 pub enum Paner<T> {
@@ -314,13 +355,14 @@ impl<T> Paner<T> {
         let mut canvas = InstructionBuffer::new(width, height, None);
 
         match borders {
-            BorderStyle::Connected2 { borderh, borderv } => {
+            BorderStyle::Connected2(borderh, borderv) => {
                 canvas.draw_hbar(1, 0, width - 2, borderh, None);
                 canvas.draw_hbar(1, height - 1, width - 2, borderh, None);
                 canvas.draw_vbar(0, 0, height, borderv, None);
                 canvas.draw_vbar(width - 1, 0, height, borderv, None);
             }
             BorderStyle::Gap(..) => {}
+            // BorderStyle::Disconnected2(..) => {}
         }
 
         string.push_str(&canvas.render(0, 0));
@@ -342,6 +384,20 @@ impl<T> Paner<T> {
         match self {
             Self::Pane(pane) => {
                 arr.push((pane, start_col, start_row, width, height));
+
+                match borders {
+                    // BorderStyle::Disconnected2(borderh, borderv) => {
+                    //     let (width, height) = (width + 2, height + 2);
+                    //     let mut canvas = InstructionBuffer::new(width, height, None);
+                    //     canvas.draw_hbar(1, 0, width - 2, borderh, None);
+                    //     canvas.draw_hbar(1, height - 1, width - 2, borderh, None);
+                    //     canvas.draw_vbar(0, 0, height, borderv, None);
+                    //     canvas.draw_vbar(width - 1, 0, height, borderv, None);
+                    //     string.push_str(&canvas.render(start_col - 1, start_row - 1));
+                    // }
+                    BorderStyle::Connected2(..) => {}
+                    BorderStyle::Gap(..) => {}
+                }
             }
             Self::Horizontal(paners) | Self::Vertical(paners) => {
                 let total: Cell = paners.iter().map(|i| i.0).sum();
@@ -352,7 +408,8 @@ impl<T> Paner<T> {
 
                 let gap = match *borders {
                     BorderStyle::Gap(cells) => cells,
-                    BorderStyle::Connected2 { .. } => 1,
+                    BorderStyle::Connected2(..) => 1,
+                    // BorderStyle::Disconnected2(..) => 2,
                 };
 
                 let mut canvas = InstructionBuffer::new(width + 1, height + 1, None);
@@ -380,12 +437,13 @@ impl<T> Paner<T> {
 
                     if 0 < j {
                         match borders {
-                            BorderStyle::Connected2 { borderh, borderv } => {
+                            BorderStyle::Connected2(borderh, borderv) => {
                                 let extra = if first { 0 } else { 0 };
                                 if horizontal { canvas.draw_vbar(i - 1, 0, height + extra, borderv, None) }
                                 else { canvas.draw_hbar(0, i - 1, width + extra, borderh, None) }
                             }
                             BorderStyle::Gap(..) => {}
+                            // BorderStyle::Disconnected2(..) => {}
                         }
                     }
 
