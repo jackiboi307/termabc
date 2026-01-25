@@ -13,21 +13,23 @@ fn main() {
     let paner = {
         use Paner::*;
         use PaneType::*;
+        use PaneSize::*;
 
         Horizontal(vec![
-            (1, Pane(Normal)),
-            (1, Vertical(vec![
-                (1, Pane(Normal)),
-                (1, Horizontal(vec![
-                    (1, Pane(Special)),
-                    (1, Pane(Normal)),
+            (Relative(1), Pane(Normal)),
+            (Relative(1), Vertical(vec![
+                (Relative(1), Horizontal(vec![
+                    (Fixed(10), Pane(Normal)),
+                    (Relative(1), Pane(Normal)),
+                    (Relative(1), Pane(Special)),
                 ])),
-                (1, Pane(Normal)),
-                (1, Pane(Normal)),
+                (Fixed(1), Pane(Special)),
+                (Relative(1), Pane(Normal)),
+                (Relative(1), Pane(Normal)),
             ])),
-            (1, Vertical(vec![
-                (1, Pane(Normal)),
-                (1, Pane(Special)),
+            (Relative(1), Vertical(vec![
+                (Relative(1), Pane(Normal)),
+                (Relative(1), Pane(Special)),
             ])),
         ])
     };

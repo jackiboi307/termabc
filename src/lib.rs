@@ -336,19 +336,24 @@ pub enum BorderStyle {
     // Disconnected2(Static, Static),
 }
 
+pub enum PaneSize {
+    Fixed(Cell),
+    Relative(Cell),
+}
+
 pub enum Paner<T> {
     Pane(T),
-    Horizontal(Vec<(Cell, Paner<T>)>),
-    Vertical(Vec<(Cell, Paner<T>)>),
+    Horizontal(Vec<(PaneSize, Paner<T>)>),
+    Vertical(Vec<(PaneSize, Paner<T>)>),
 }
 
 impl<T> Paner<T> {
     pub fn render(
             &self,
-			mut start_col: Cell,
-			mut start_row: Cell,
-			mut width: Cell,
-			mut height: Cell,
+			start_col: Cell,
+			start_row: Cell,
+			width: Cell,
+			height: Cell,
 			borders: &BorderStyle) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
 
         let (mut string, arr) = self.render_sub(start_col + 1, start_row + 1, width - 2, height - 2, borders, true);
@@ -371,10 +376,10 @@ impl<T> Paner<T> {
 
     fn render_sub(
             &self,
-			mut start_col: Cell,
-			mut start_row: Cell,
-			mut width: Cell,
-			mut height: Cell,
+			start_col: Cell,
+			start_row: Cell,
+			width: Cell,
+			height: Cell,
 			borders: &BorderStyle,
             first: bool) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
 
@@ -400,7 +405,11 @@ impl<T> Paner<T> {
                 }
             }
             Self::Horizontal(paners) | Self::Vertical(paners) => {
-                let total: Cell = paners.iter().map(|i| i.0).sum();
+                let total_rel: Cell = paners.iter()
+                    .map(|i| if let PaneSize::Relative(size) = i.0 { size } else { 0 }).sum();
+                let total_fixed: Cell = paners.iter()
+                    .map(|i| if let PaneSize::Fixed(size) = i.0 { size } else { 0 }).sum();
+
                 let horizontal = match self {
                     Self::Horizontal(..) => true,
                     _ => false
@@ -416,13 +425,22 @@ impl<T> Paner<T> {
 
                 let mut i = 0;
                 for (j, (size, paner)) in paners.iter().enumerate() {
-                    let size = if horizontal { width } else { height } * size / total - gap;
+                    let size = match size {
+                        PaneSize::Relative(size) => {
+                            let size = ((if horizontal { width } else { height })
+                                .saturating_sub(total_fixed) * size / total_rel)
+                                .saturating_sub(gap);
 
-                    // extend the last element if it can not be perfect
-                    // TODO improve this and make it even
-                    let size = size + if j == paners.len() - 1 {
-                        (if horizontal { width } else { height }) - size - i
-                    } else { 0 };
+                            // extend the last element if it can not be perfect
+                            // TODO improve this and make it even
+                            let size = size + if j == paners.len() - 1 {
+                                (if horizontal { width } else { height }).saturating_sub(size + i)
+                            } else { 0 };
+
+                            size
+                        }
+                        PaneSize::Fixed(size) => *size
+                    };
 
                     let (new_string, mut new_arr) = paner.render_sub(
                         if horizontal { start_col + i } else { start_col },
