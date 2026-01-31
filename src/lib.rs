@@ -92,7 +92,7 @@ pub enum Color {
     BrightMagenta,
     BrightCyan,
     BrightWhite,
-    Color256(u8),
+    Ansi(u8),
     True(u8, u8, u8),
 }
 
@@ -116,9 +116,9 @@ impl Color {
             Color::BrightMagenta => control_sequences::FG_MAGENTA_B,
             Color::BrightCyan => control_sequences::FG_CYAN_B,
             Color::BrightWhite => control_sequences::FG_WHITE_B,
-            Color::Color256(..) | Color::True(..) => {
+            Color::Ansi(..) | Color::True(..) => {
                 match self {
-                    Color::Color256(id) => return formatf!("{FG_ID}", id),
+                    Color::Ansi(id) => return formatf!("{FG_ID}", id),
                     Color::True(r, g, b) => return formatf!("{FG_RGB}", r, g, b),
                     _ => unreachable!()
                 }
@@ -145,9 +145,9 @@ impl Color {
             Color::BrightMagenta => control_sequences::BG_MAGENTA_B,
             Color::BrightCyan => control_sequences::BG_CYAN_B,
             Color::BrightWhite => control_sequences::BG_WHITE_B,
-            Color::Color256(..) | Color::True(..) => {
+            Color::Ansi(..) | Color::True(..) => {
                 match self {
-                    Color::Color256(id) => return formatf!("{BG_ID}", id),
+                    Color::Ansi(id) => return formatf!("{BG_ID}", id),
                     Color::True(r, g, b) => return formatf!("{BG_RGB}", r, g, b),
                     _ => unreachable!()
                 }
