@@ -1,6 +1,7 @@
 pub mod control_sequences;
 pub mod input_sequences;
 
+use unicode_segmentation::UnicodeSegmentation;
 use control_sequences::*;
 
 use std::fmt;
@@ -43,7 +44,9 @@ macro_rules! printf {
 
 type Cell = u16;
 type Str = String;
-type Static = &'static str;
+
+/// Exists to make the documentation easier to follow, might be removed
+pub type Static = &'static str;
 
 pub trait Canvas {
     fn clear(&mut self);
@@ -68,6 +71,92 @@ pub trait Canvas {
         for i in 0..length {
             self.setcursor(col, row + i);
             self.addtext(ch);
+        }
+    }
+
+    fn draw_box(&mut self, col: Cell, row: Cell, width: Cell, height: Cell,
+            border: &BorderStyle, style: Option<&Style>) {
+
+        let (h, v, tl, tr, bl, br) = match *border {
+            BorderStyle::Gap(..) => ("", "", "", "", "", ""),
+            BorderStyle::Connected([h, v, tl, tr, bl, br, _, _, _, _, _]) |
+            BorderStyle::Disconnected([h, v, tl, tr, bl, br]) => (h, v, tl, tr, bl, br),
+        };
+
+        // draw sides
+        self.draw_hbar(col + 1, row, width.saturating_sub(2), h, style);
+        self.draw_hbar(col + 1, row + height.saturating_sub(1), width.saturating_sub(2), h, style);
+        self.draw_vbar(col, row + 1, height.saturating_sub(2), v, style);
+        self.draw_vbar(col + width.saturating_sub(1), row + 1, height.saturating_sub(2), v, style);
+
+        draw_corners(self, col, row, width, height, tl, tr, bl, br, style);
+    }
+}
+
+// NOTE these are also used in Paner, hence the ugly separation from Canvas.draw_box
+
+fn draw_corners(
+        canvas: &mut (impl Canvas + ?Sized),
+        col: Cell,
+        row: Cell,
+        width: Cell,
+        height: Cell,
+        tl: Static,
+        tr: Static,
+        bl: Static,
+        br: Static,
+        style: Option<&Style>) {
+
+    canvas.setstyle(style);
+    canvas.setcursor(col, row);
+    canvas.addtext(tl);
+    canvas.setcursor(col + width.saturating_sub(1), row);
+    canvas.addtext(tr);
+    canvas.setcursor(col, row + height.saturating_sub(1));
+    canvas.addtext(bl);
+    canvas.setcursor(col + width.saturating_sub(1), row + height.saturating_sub(1));
+    canvas.addtext(br);
+}
+
+pub enum BorderStyle {
+    /// An empty gap of some size
+    Gap(Cell),
+    Connected([Static; 11]),
+    Disconnected([Static; 6]),
+}
+
+impl BorderStyle {
+    pub const CONNECTED_LIGHT: Self =
+        BorderStyle::Connected(["─", "│", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼"]);
+    pub const DISCONNECTED_LIGHT: Self =
+        BorderStyle::Disconnected(["─", "│", "┌", "┐", "└", "┘"]);
+
+    pub const CONNECTED_HEAVY: Self =
+        BorderStyle::Connected(["━", "┃", "┏", "┓", "┗", "┛", "┣", "┫", "┳", "┻", "╋"]);
+    pub const DISCONNECTED_HEAVY: Self =
+        BorderStyle::Disconnected(["━", "┃", "┏", "┓", "┗", "┛"]);
+
+    pub const CONNECTED_DOUBLE: Self =
+        BorderStyle::Connected(["═", "║", "╔", "╗", "╚", "╝", "╠", "╣", "╦", "╩", "╬"]);
+    pub const DISCONNECTED_DOUBLE: Self =
+        BorderStyle::Disconnected(["═", "║", "╔", "╗", "╚", "╝"]);
+    
+
+    pub fn connected_from_str(string: Static) -> Self {
+        let vec: Vec<_> = string.graphemes(true).collect();
+        Self::Connected(vec.try_into().expect("expected 11 characters"))
+    }
+
+    pub fn disconnected_from_str(string: Static) -> Self {
+        let vec: Vec<_> = string.graphemes(true).collect();
+        Self::Connected(vec.try_into().expect("expected 6 characters"))
+    }
+
+    fn gap(&self) -> Cell {
+        match self {
+            Self::Gap(cells) => *cells,
+            Self::Connected(..) => 1,
+            Self::Disconnected(..) => 2,
         }
     }
 }
@@ -310,10 +399,8 @@ impl<'a> Canvas for InstructionBuffer<'a> {
                 Instruction::Text(string) => {
                     if row < self.height {
                         // truncate if too long
-                        let string = if usize::from(self.width) < string.len() {
-                            string.get(..usize::from(self.width)).unwrap()
-                        } else { string };
-                        result.push_str(string);
+                        let string: String = string.graphemes(true).take(self.width.into()).collect();
+                        result.push_str(&string);
                     }
                 }
                 Instruction::SetCursor(col, new_row) => {
@@ -328,12 +415,6 @@ impl<'a> Canvas for InstructionBuffer<'a> {
 
         result
     }
-}
-
-pub enum BorderStyle {
-    Gap(Cell),
-    Connected2(Static, Static),
-    // Disconnected2(Static, Static),
 }
 
 pub enum PaneSize {
@@ -354,20 +435,38 @@ impl<T> Paner<T> {
 			start_row: Cell,
 			width: Cell,
 			height: Cell,
-			borders: &BorderStyle) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
+			border: &BorderStyle) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
 
-        let (mut string, arr) = self.render_sub(start_col + 1, start_row + 1, width - 2, height - 2, borders, true);
+        let (mut string, arr) = self.render_sub(
+            start_col + 1,
+            start_row + 1,
+            width - 2,
+            height - 2,
+            border,
+            (start_col, start_row, width, height),
+            false
+        );
+
         let mut canvas = InstructionBuffer::new(width, height, None);
 
-        match borders {
-            BorderStyle::Connected2(borderh, borderv) => {
-                canvas.draw_hbar(1, 0, width - 2, borderh, None);
-                canvas.draw_hbar(1, height - 1, width - 2, borderh, None);
-                canvas.draw_vbar(0, 0, height, borderv, None);
-                canvas.draw_vbar(width - 1, 0, height, borderv, None);
-            }
+        match border {
             BorderStyle::Gap(..) => {}
-            // BorderStyle::Disconnected2(..) => {}
+            BorderStyle::Disconnected(..) => {}
+            BorderStyle::Connected([_, _, tl, tr, bl, br, _, _, _, _, _]) => {
+                // NOTE this is probably very inefficient!
+                let (corners, _) = self.render_sub(
+                    start_col + 1,
+                    start_row + 1,
+                    width - 2,
+                    height - 2,
+                    border,
+                    (start_col, start_row, width, height),
+                    true
+                );
+
+                string.push_str(&corners);
+                draw_corners(&mut canvas, start_col, start_row, width, height, tl, tr, bl, br, None);
+            }
         }
 
         string.push_str(&canvas.render(0, 0));
@@ -380,8 +479,9 @@ impl<T> Paner<T> {
 			start_row: Cell,
 			width: Cell,
 			height: Cell,
-			borders: &BorderStyle,
-            first: bool) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
+			border: &BorderStyle,
+            original: (Cell, Cell, Cell, Cell),
+            corners: bool) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
 
         let mut arr = Vec::new();
         let mut string = String::new();
@@ -390,17 +490,14 @@ impl<T> Paner<T> {
             Self::Pane(pane) => {
                 arr.push((pane, start_col, start_row, width, height));
 
-                match borders {
-                    // BorderStyle::Disconnected2(borderh, borderv) => {
-                    //     let (width, height) = (width + 2, height + 2);
-                    //     let mut canvas = InstructionBuffer::new(width, height, None);
-                    //     canvas.draw_hbar(1, 0, width - 2, borderh, None);
-                    //     canvas.draw_hbar(1, height - 1, width - 2, borderh, None);
-                    //     canvas.draw_vbar(0, 0, height, borderv, None);
-                    //     canvas.draw_vbar(width - 1, 0, height, borderv, None);
-                    //     string.push_str(&canvas.render(start_col - 1, start_row - 1));
-                    // }
-                    BorderStyle::Connected2(..) => {}
+                match border {
+                    BorderStyle::Disconnected(..) => {
+                        let (width, height) = (width + 2, height + 2);
+                        let mut canvas = InstructionBuffer::new(width, height, None);
+                        canvas.draw_box(0, 0, width, height, border, None);
+                        string.push_str(&canvas.render(start_col - 1, start_row - 1));
+                    }
+                    BorderStyle::Connected(..) |
                     BorderStyle::Gap(..) => {}
                 }
             }
@@ -415,13 +512,9 @@ impl<T> Paner<T> {
                     _ => false
                 };
 
-                let gap = match *borders {
-                    BorderStyle::Gap(cells) => cells,
-                    BorderStyle::Connected2(..) => 1,
-                    // BorderStyle::Disconnected2(..) => 2,
-                };
+                let gap = border.gap();
 
-                let mut canvas = InstructionBuffer::new(width + 1, height + 1, None);
+                let mut canvas = InstructionBuffer::new(width + 2, height + 2, None);
 
                 let mut i = 0;
                 for (j, (size, paner)) in paners.iter().enumerate() {
@@ -429,7 +522,7 @@ impl<T> Paner<T> {
                         PaneSize::Relative(size) => {
                             let size = ((if horizontal { width } else { height })
                                 .saturating_sub(total_fixed) * size / total_rel)
-                                .saturating_sub(gap);
+                                .saturating_sub(gap) - 1;
 
                             // extend the last element if it can not be perfect
                             // TODO improve this and make it even
@@ -447,28 +540,85 @@ impl<T> Paner<T> {
                         if horizontal { start_row } else { start_row + i },
                         if horizontal { size } else { width },
                         if horizontal { height } else { size },
-                        borders,
-                        false
+                        border,
+                        original,
+                        corners
                     );
                     string.push_str(&new_string);
                     arr.append(&mut new_arr);
 
-                    if 0 < j {
-                        match borders {
-                            BorderStyle::Connected2(borderh, borderv) => {
-                                let extra = if first { 0 } else { 0 };
-                                if horizontal { canvas.draw_vbar(i - 1, 0, height + extra, borderv, None) }
-                                else { canvas.draw_hbar(0, i - 1, width + extra, borderh, None) }
+                    let (old_width, old_height) = (width, height);
+
+                    let (col, row, width, height) = (
+                        if horizontal { i } else { 0 },
+                        if horizontal { 0 } else { i },
+                        if horizontal { size } else { width } + 2,
+                        if horizontal { height } else { size } + 2,
+                    );
+
+                    match border {
+                        BorderStyle::Connected([h, v, _, _, _, _, right, left, down, up, _]) => {
+                            if !corners {
+                                if horizontal {
+                                    canvas.draw_vbar(i, 0, old_height + 1, v, None);
+                                } else {
+                                    canvas.draw_hbar(0, i, old_width + 1, h, None);
+                                }
+
+                                if j == paners.len() - 1 {
+                                    if horizontal {
+                                        canvas.draw_vbar(i + size + 1, 0, old_height + 1, v, None);
+                                    } else {
+                                        canvas.draw_hbar(0, i + size + 1, old_width + 1, h, None);
+                                    }
+                                }
+
+                            } else {
+                                draw_corners(
+                                    &mut canvas,
+                                    col,
+                                    row,
+                                    width,
+                                    height,
+                                    right,
+                                    left,
+                                    up,
+                                    down,
+                                    None
+                                );
                             }
-                            BorderStyle::Gap(..) => {}
-                            // BorderStyle::Disconnected2(..) => {}
+                        }
+                        BorderStyle::Disconnected(..) |
+                        BorderStyle::Gap(..) => {}
+                    }
+
+                    if corners {
+                        match border {
+                            BorderStyle::Connected(border) => {
+                                if start_col + col - 1 == original.0 {
+                                    canvas.addstr(col, row, border[6], None);
+                                }
+
+                                if start_col + col + width - 1 == original.2 {
+                                    canvas.addstr(col + width - 1, row, border[7], None);
+                                }
+
+                                if start_row + row - 1 == original.1 {
+                                    canvas.addstr(col, row, border[8], None);
+                                }
+
+                                if start_row + row + height - 1 == original.3 {
+                                    canvas.addstr(col, row + height - 1, border[9], None);
+                                }
+                            }
+                            _ => {}
                         }
                     }
 
                     i += size + gap;
                 }
 
-                string.push_str(&canvas.render(start_col, start_row));
+                string.push_str(&canvas.render(start_col - 1, start_row - 1));
             }
         }
 

@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 termsize = "0.1.9"
+unicode-segmentation = "1.12.0"
