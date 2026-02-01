@@ -1,8 +1,4 @@
-use termabc::*;
-use termabc::{
-    control_sequences::*,
-    Color::*,
-};
+use termabc::prelude::*;
 
 fn main() {
     // using escape sequences

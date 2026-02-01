@@ -1,8 +1,4 @@
-use termabc::*;
-use termabc::{
-    control_sequences::*,
-    Color::*,
-};
+use termabc::prelude::*;
 
 // custom id used for panes
 enum PaneType {
