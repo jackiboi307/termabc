@@ -60,6 +60,7 @@ fn main() {
         // create a new canvas
         let mut canvas = InstructionBuffer::new(width, height, Some(&default_style));
 
+        // select text and style based on the PaneType value
         let (text, style) = match panetype {
             PaneType::Normal => ("example text", None),
             PaneType::Special => ("special text", Some(&default_style.with_fg(BrightGreen).bold()))
