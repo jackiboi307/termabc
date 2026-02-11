@@ -25,6 +25,19 @@ pub fn read_bytes<const A: usize>() -> Result<Box<[u8]>, Box<dyn std::error::Err
     Ok(strip_bytes(&bytes))
 }
 
+/// Block until Ctrl-C is pressed
+pub fn block_until_interrupt() {
+    loop {
+        if let Ok(bytes) = read_bytes::<1>() {
+            if &*bytes == crate::input_sequences::CTRL_C {
+                break
+            }
+        } else {
+            break
+        }
+    }
+}
+
 /// Strip trailing zeros (null bytes)
 pub fn strip_bytes(bytes: &[u8]) -> Box<[u8]> {
     bytes.iter().map(|byte| *byte).take_while(|byte| *byte != 0).collect::<Vec<_>>().into()
