@@ -8,17 +8,17 @@ pub fn flush() {
     let _ = stdout().flush();
 }
 
-/** Read some amount of bytes from stdin
-  * ```
-  * let bytes = &*read_bytes::<8>()?;
-  *
-  * if bytes == ESCAPE {
-  *     break Ok(())
-  * }
-  *
-  * let string = str::from_utf8(&bytes)?;
-  * ```
-  */
+/** ## Read some amount of bytes from stdin
+```
+let bytes = &*read_bytes::<8>()?;
+
+if bytes == ESCAPE {
+    break Ok(())
+}
+
+let string = str::from_utf8(&bytes)?;
+```
+*/
 pub fn read_bytes<const A: usize>() -> Result<Box<[u8]>, Box<dyn std::error::Error>> {
     let mut bytes = [0; A];
     stdin().read(&mut bytes)?;
