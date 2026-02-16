@@ -15,6 +15,71 @@ type Str = String;
 /// Exists to make the documentation easier to follow, might be removed
 pub type Static = &'static str;
 
+
+/**
+Recursively wrappes a string within the named width.
+
+## Example from [Examples/paner.rs](https://github.com/jackiboi307/termabc/blob/master/examples/paner.rs)
+```
+for (panetype, col, row, width, height) in panes {
+    let mut canvas = InstructionBuffer::new(width, height, Some(&default_style));
+
+    let (text, style) = match panetype {
+        PaneType::Normal => ("example text", None),
+        PaneType::Special => ("special text", Some(&default_style.with_fg(BrightGreen).bold())),
+        PaneType::Long => (LONG_TEXT, Some(&default_style.with_fg(Yellow).italic()))
+    };
+
+    // Instead of
+    canvas.addstr(0, 0, text, style);
+
+    // you can wrap the text
+    canvas.addstr_wrap(0, 0, text, style);
+
+    // or for more power
+    canvas.addstr(0, 0, wrap(text, width), style);
+    
+    // or possibly add padding like this
+    canvas.addstr(2, 0, wrap(text, width -4), style);
+
+    print!("{}", canvas.render(col, row));
+}
+```
+*/
+pub fn wrap(string: &str, width: Cell) -> Vec<&str> {
+
+    // Do i even need to wrap?
+    if string.len() as Cell <= width {
+        return vec![string];
+    }
+
+    // The method `.split_at(mid)` that is used below takes in the argument 
+    // `mid` that is supposed to be a byte index. To account for some 
+    // graphemes being more than one byte (thus preventing panics when trying 
+    // to "split" a character in half), the algorithm counts the bytes.
+    let mut byte_index  = 0;
+    let mut newline_idx = 0; // best place so far for a new line.
+    let mut lines = Vec::new();
+
+    // Split after latest word and recursively handle the rest.
+    for (idx, c) in string.graphemes(true).enumerate() {
+        byte_index += c.as_bytes().len();
+
+        if idx >= ( width -1 )/* len = idx+1 */ as usize {
+            let (line, rest) = string.split_at(newline_idx);
+            lines.push(line);
+            lines.append(&mut wrap(rest, width)); // Recursion occures here.
+            break;
+        }
+
+        if c.as_bytes() == " ".as_bytes() {
+            newline_idx = byte_index;
+        }
+    }
+
+    return lines;
+}
+
 pub trait Canvas {
     fn clear(&mut self);
     fn render(&self, col: Cell, row: Cell) -> Str;
@@ -22,11 +87,25 @@ pub trait Canvas {
     fn addcmd(&mut self, cmd: &str);
     fn setstyle(&mut self, style: Option<&Style>);
     fn setcursor(&mut self, col: Cell, row: Cell);
+    fn size(&self) -> (Cell, Cell);
 
     fn addstr(&mut self, col: Cell, row: Cell, string: &str, style: Option<&Style>) {
         self.setcursor(col, row);
         self.setstyle(style);
         self.addtext(string);
+    }
+
+    fn addstr_wrap(&mut self, col: Cell, row: Cell, string: &str, style: Option<&Style>) -> Cell {
+        let (max_w, _) = self.size();
+        let lines = wrap(string, max_w);
+
+        for (no, line) in lines.iter().enumerate() {
+            self.setcursor(col, row + no as Cell);
+            self.setstyle(style);
+            self.addtext(*line);
+        }
+
+        return lines.len() as Cell;
     }
 
     fn draw_hbar(&mut self, col: Cell, row: Cell, length: Cell, ch: &str, style: Option<&Style>) {
@@ -42,12 +121,12 @@ pub trait Canvas {
     }
 
     fn draw_box(&mut self, col: Cell, row: Cell, width: Cell, height: Cell,
-            border: &BorderStyle, style: Option<&Style>) {
+        border: &BorderStyle, style: Option<&Style>) {
 
         let (h, v, tl, tr, bl, br) = match *border {
             BorderStyle::Gap(..) => ("", "", "", "", "", ""),
             BorderStyle::Connected([h, v, tl, tr, bl, br, _, _, _, _, _]) |
-            BorderStyle::Disconnected([h, v, tl, tr, bl, br]) => (h, v, tl, tr, bl, br),
+                BorderStyle::Disconnected([h, v, tl, tr, bl, br]) => (h, v, tl, tr, bl, br),
         };
 
         // draw sides
@@ -63,16 +142,16 @@ pub trait Canvas {
 // NOTE these are also used in Paner, hence the ugly separation from Canvas.draw_box
 
 fn draw_corners(
-        canvas: &mut (impl Canvas + ?Sized),
-        col: Cell,
-        row: Cell,
-        width: Cell,
-        height: Cell,
-        tl: Static,
-        tr: Static,
-        bl: Static,
-        br: Static,
-        style: Option<&Style>) {
+    canvas: &mut (impl Canvas + ?Sized),
+    col: Cell,
+    row: Cell,
+    width: Cell,
+    height: Cell,
+    tl: Static,
+    tr: Static,
+    bl: Static,
+    br: Static,
+    style: Option<&Style>) {
 
     canvas.setstyle(style);
     canvas.setcursor(col, row);
@@ -107,7 +186,7 @@ impl BorderStyle {
         BorderStyle::Connected(["═", "║", "╔", "╗", "╚", "╝", "╠", "╣", "╦", "╩", "╬"]);
     pub const DISCONNECTED_DOUBLE: Self =
         BorderStyle::Disconnected(["═", "║", "╔", "╗", "╚", "╝"]);
-    
+
 
     pub fn connected_from_str(string: Static) -> Self {
         let vec: Vec<_> = string.graphemes(true).collect();
@@ -353,7 +432,7 @@ impl<'a> Canvas for InstructionBuffer<'a> {
 
     fn setstyle(&mut self, style: Option<&Style>) {
         self.instructions.push(Instruction::Style(
-            style.unwrap_or_else(|| self.default_style).as_string()
+                style.unwrap_or_else(|| self.default_style).as_string()
         ));
     }
 
@@ -382,6 +461,8 @@ impl<'a> Canvas for InstructionBuffer<'a> {
 
         result
     }
+
+    fn size(&self) -> (Cell, Cell) { (self.width, self.height) }
 }
 
 pub enum PaneSize {
@@ -397,12 +478,12 @@ pub enum Paner<T> {
 
 impl<T> Paner<T> {
     pub fn render(
-            &self,
-			start_col: Cell,
-			start_row: Cell,
-			width: Cell,
-			height: Cell,
-			border: &BorderStyle) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
+        &self,
+        start_col: Cell,
+        start_row: Cell,
+        width: Cell,
+        height: Cell,
+        border: &BorderStyle) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
 
         let (mut string, arr) = self.render_sub(
             start_col + 1,
@@ -441,14 +522,14 @@ impl<T> Paner<T> {
     }
 
     fn render_sub(
-            &self,
-			start_col: Cell,
-			start_row: Cell,
-			width: Cell,
-			height: Cell,
-			border: &BorderStyle,
-            original: (Cell, Cell, Cell, Cell),
-            corners: bool) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
+        &self,
+        start_col: Cell,
+        start_row: Cell,
+        width: Cell,
+        height: Cell,
+        border: &BorderStyle,
+        original: (Cell, Cell, Cell, Cell),
+        corners: bool) -> (Str, Vec<(&T, Cell, Cell, Cell, Cell)>) {
 
         let mut arr = Vec::new();
         let mut string = String::new();
@@ -465,7 +546,7 @@ impl<T> Paner<T> {
                         string.push_str(&canvas.render(start_col - 1, start_row - 1));
                     }
                     BorderStyle::Connected(..) |
-                    BorderStyle::Gap(..) => {}
+                        BorderStyle::Gap(..) => {}
                 }
             }
             Self::Horizontal(paners) | Self::Vertical(paners) => {
@@ -556,7 +637,7 @@ impl<T> Paner<T> {
                             }
                         }
                         BorderStyle::Disconnected(..) |
-                        BorderStyle::Gap(..) => {}
+                            BorderStyle::Gap(..) => {}
                     }
 
                     if corners {
