@@ -8,6 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use control_sequences::*;
 
 use std::fmt;
+use std::collections::HashMap;
 
 type Cell = u16;
 type Str = String;
@@ -389,7 +390,7 @@ enum Instruction {
     // TODO add more instructions for moving the cursor, so cursor position can be kept 
     // aware of and it is possible to ensure you can not draw outside canvases
     Text(String),
-    Style(String),
+    Style(Style),
     SetCursor(Cell, Cell),
     Command(String),
 }
@@ -410,6 +411,46 @@ impl<'a> InstructionBuffer<'a> {
             width,
             height,
         }
+    }
+
+    /// Useful for rendering TUI's in graphical applications
+    pub fn render_to_chars(&self)
+            -> HashMap<(u16, u16), (char, (u8, u8, u8), Option<(u8, u8, u8)>)> {
+
+        let mut chars = HashMap::new();
+        let mut fg = (0, 0, 0);
+        let mut bg = None;
+        let mut col = 0;
+        let mut row = 0;
+
+        for instruction in self.instructions.iter() {
+            match instruction {
+                Instruction::Text(string) => {
+                    if row < self.height {
+                        for (i, ch) in string.chars().take(self.width.into()).enumerate() {
+                            chars.insert((col + i as u16, row), (ch, fg, bg));
+                        }
+                    }
+                }
+                Instruction::SetCursor(new_col, new_row) => {
+                    col = *new_col;
+                    row = *new_row;
+                }
+                Instruction::Style(style) => {
+                    fg = match style.fg {
+                        Some(Color::True(r, g, b)) => (r, g, b),
+                        _ => fg,
+                    };
+                    bg = match style.bg {
+                        Some(Color::True(r, g, b)) => Some((r, g, b)),
+                        _ => None,
+                    };
+                }
+                Instruction::Command(_) => unimplemented!(),
+            }
+        }
+
+        chars
     }
 }
 
@@ -453,8 +494,11 @@ impl<'a> Canvas for InstructionBuffer<'a> {
                     result.push_str(&formatf!("{CUR_SET}", start_row + new_row + 1, start_col + col + 1));
                     row = *new_row;
                 }
-                Instruction::Command(string) | Instruction::Style(string) => {
+                Instruction::Command(string) => {
                     result.push_str(string);
+                }
+                Instruction::Style(style) => {
+                    result.push_str(&style.as_string());
                 }
             }
         }
